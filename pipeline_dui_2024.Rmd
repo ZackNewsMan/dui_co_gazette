@@ -1,0 +1,287 @@
+---
+title: "DUI Colorado 2024 - Pipeline"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
+```{r}
+library(tidyverse)
+library(janitor)
+```
+
+
+
+```{r}
+
+# Bring in the data
+
+  # Denver operates as a separate probate court which is why I needed their data separately to get a full picture.
+    # https://www.courts.state.co.us/userfiles/file/Media/Brochures/2014webglance.pdf 
+
+    # Denver
+    
+      library(readr)
+      denver_dui_010113_04202023 <- read_csv("Denver/denver_dui_010113_04202023.csv")
+      View(denver_dui_010113_04202023)
+      
+      library(readr)
+      denver_dui_042123_112024 <- read_csv("Denver/denver_dui_042123_112024.csv")
+      View(denver_dui_042123_112024)
+      
+    # Statewide
+      
+      library(readr)
+      dui_statewide_charges_010113_042023 <- read_csv("Statewide/dui_statewide_charges_010113_042023.csv")
+      View(dui_statewide_charges_010113_042023)
+      
+      library(readr)
+      statewide_dui_charge_042123_112024 <- read_csv("Statewide/statewide_dui_charge_042123_112024.csv")
+      View(statewide_dui_charge_042123_112024)
+
+```
+
+```{r} 
+
+# Clean and rename Denver data
+
+cleaned_denver_dui_010113_04202023 <- denver_dui_010113_04202023 %>% 
+        clean_names()
+      
+      cleaned_denver_dui_042123_112024 <- denver_dui_042123_112024 %>% 
+        clean_names()
+
+cleaned_denver_dui_010113_04202023 %>% 
+          rename(date_filed = case_filed_date,
+                 bindover_description = bindover,
+                 violation_list_dispositions = violation_list_disposition_date_if_applicable)
+
+renamed_cleaned_denver_dui_010113_04202023 <- cleaned_denver_dui_010113_04202023 %>% 
+          rename(date_filed = case_filed_date,
+                 bindover_description = bindover,
+                 violation_list_dispositions = violation_list_disposition_date_if_applicable)
+
+```
+
+```{r}
+
+# Join em boys
+
+denver <- renamed_cleaned_denver_dui_010113_04202023 %>% 
+           full_join(cleaned_denver_dui_042123_112024) 
+
+
+```
+
+
+```{r}
+
+  # Distinct case numbers where the cases haven't been bindover to higher court
+      
+ distinct_denver <- denver %>% 
+           distinct(case_number, .keep_all = TRUE) %>% 
+           filter(is.na(bindover_description))
+
+# Misdemeanors are sent to district court to be tried as a felony if there is enough evidence, per the Denver DA.
+  # https://www.denverda.org/denver-criminal-courts/ 
+  # "In a felony case, if after a preliminary hearing the County Court judge decides there is sufficient evidence to prove the defendant more likely than   # not committed the crime, the felony case is “bound over” to Denver District Court."
+        
+
+```
+
+
+```{r}
+
+# Statewide rename, join and distinct value
+
+ cleaned_statewide_charges_010113_042023 <- dui_statewide_charges_010113_042023 %>% 
+           clean_names()
+
+ cleaned_statewide_charges_042123_112024 <- statewide_dui_charge_042123_112024 %>% 
+           clean_names()
+
+renamed_cleaned_statewide_charges_010113_042023 <- cleaned_statewide_charges_010113_042023 %>% 
+            rename(court_loc_name_district = courtloc_name_district)
+            
+statewide <- renamed_cleaned_statewide_charges_010113_042023 %>% full_join(cleaned_statewide_charges_042123_112024) 
+
+distinct_statewide <- statewide %>% 
+  distinct(case_number, .keep_all = TRUE)
+
+
+
+```
+
+
+```{r}
+
+         # Need to get file year in denver - most efficient to do it manually
+            # Example of formula is: =TEXT(B2, "YYYY")
+            
+            distinct_denver %>% write_csv("distinct_denver.csv", na = "")
+         
+            library(readr)
+            distinct_denver_2 <- read_csv("distinct_denver_2.csv")
+            View(distinct_denver_2)
+
+
+```
+
+```{r}
+        # Some blanks in later data so had to do same thing in statewide stuff
+      
+            distinct_statewide %>% write_csv("distinct_statewide.csv", na = "")
+         
+            library(readr)
+            distinct_statewide_2 <- read_csv("distinct_statewide_2.csv")
+            View(distinct_denver_2)
+
+
+```
+
+```{r}
+
+# To get full picture of all cases filed across the state
+
+ # Statewide
+            
+            statewide_year_count <- distinct_statewide_2 %>% 
+              group_by(year_case_file) %>% 
+              summarize(statewide_case_count = n())
+            
+ # Denver 
+            
+            denver_year_count <- distinct_denver_2 %>% 
+              group_by(year_case_file) %>% 
+              summarize(denver_case_count = n())
+
+            
+ dui_cases_year <- statewide_year_count %>% full_join(denver_year_count) %>% 
+              mutate(total_cases = statewide_case_count + denver_case_count) %>% 
+              select(year_case_file, total_cases)            
+
+ # Export option:
+ 
+  # dui_cases_year %>% write_csv("dui_cases_year.csv", na = "")
+         
+ 
+```
+
+```{r}
+# Group by district and by year to identify district with largest decrease in cases filed
+
+             case_count_year_district_statewide <- distinct_statewide_2 %>% 
+             group_by(year_case_file, district_nbr) %>% 
+             summarize(count = n())
+
+# And for Denver - already have what we need in "denver_year_count"
+  # They are in the 2nd district and will have to be added manually
+
+
+
+```
+```{r}
+
+# Export both statewide and Denver totals by year and district (where applicable in statewide data)
+
+# case_count_year_district_statewide %>% write_csv("case_count_year_district_statewide.csv", na = "")
+
+
+# denver_year_count %>% write_csv("denver_year_count.csv", na = "")
+
+```
+
+
+```{r}
+# FBI data to calculate reported officers per year/area
+# Data comes from here: https://cde.ucr.cjis.gov/LATEST/webapp/#
+
+
+library(readr)
+lee_1960_2023 <- read_csv("FBI/lee_1960_2023.csv")
+View(lee_1960_2023)
+
+```
+
+
+```{r}
+
+  # Just want CO
+
+  co <- lee_1960_2023 %>% 
+  filter(state_abbr == "CO")
+
+
+```
+
+
+```{r}
+
+ # group by year, population, officer, total people working in each agency (officer and civilian)
+              
+              co %>% 
+                group_by(data_year) %>% 
+                summarize(count_reporting_agencies = n(),
+                          population = sum(population),
+                          officer_ct = sum(officer_ct),
+                          civilian_ct = sum(civilian_ct),
+                          total_pe_ct = sum(total_pe_ct))
+              
+
+
+```
+
+
+
+```{r}
+
+# new table and export
+
+                co_totals <- co %>% 
+                group_by(data_year) %>% 
+                summarize(count_reporting_agencies = n(),
+                          population = sum(population),
+                          officer_ct = sum(officer_ct),
+                          civilian_ct = sum(civilian_ct),
+                          total_pe_ct = sum(total_pe_ct))
+
+
+co_totals %>% write_csv("co_totals.csv", na = "")
+
+```
+
+
+```{r}
+
+# Adams County Sheriff check and export
+
+              adams_sheriff <- co %>%   
+                filter(pub_agency_name == "Adams") %>% 
+                filter(agency_type_name == "County")
+              
+
+               adams_sheriff_totals <- adams_sheriff %>% 
+                group_by(data_year) %>% 
+                summarize(count_reporting_agencies = n(),
+                          population = sum(population),
+                          officer_ct = sum(officer_ct),
+                          civilian_ct = sum(civilian_ct),
+                          total_pe_ct = sum(total_pe_ct))
+
+
+                adams_sheriff_totals %>% write_csv("adams_sheriff_totals.csv", na = "")
+
+                
+```
+
+
+
+
